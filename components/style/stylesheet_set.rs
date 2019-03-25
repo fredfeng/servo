@@ -375,6 +375,68 @@ where
     invalidations: StylesheetInvalidationSet,
 }
 
+/// Functionality common to DocumentStylesheetSet and AuthorStylesheetSet.
+pub enum StylesheetSet<'a, S>
+where
+    S: StylesheetInDocument + PartialEq + 'static,
+{
+    /// Author stylesheet set.
+    Author(&'a mut AuthorStylesheetSet<S>),
+    /// Document stylesheet set.
+    Document(&'a mut DocumentStylesheetSet<S>),
+}
+
+impl<'a, S> StylesheetSet<'a, S>
+where
+    S: StylesheetInDocument + PartialEq + 'static,
+{
+    /// Appends a new stylesheet to the current set.
+    ///
+    /// No device implies not computing invalidations.
+    pub fn append_stylesheet(
+        &mut self,
+        device: Option<&Device>,
+        sheet: S,
+        guard: &SharedRwLockReadGuard,
+    ) {
+        match self {
+            StylesheetSet::Author(set) => set.append_stylesheet(device, sheet, guard),
+            StylesheetSet::Document(set) => set.append_stylesheet(device, sheet, guard),
+        }
+    }
+
+    /// Insert a given stylesheet before another stylesheet in the document.
+    pub fn insert_stylesheet_before(
+        &mut self,
+        device: Option<&Device>,
+        sheet: S,
+        before_sheet: S,
+        guard: &SharedRwLockReadGuard,
+    ) {
+        match self {
+            StylesheetSet::Author(set) => {
+                set.insert_stylesheet_before(device, sheet, before_sheet, guard)
+            },
+            StylesheetSet::Document(set) => {
+                set.insert_stylesheet_before(device, sheet, before_sheet, guard)
+            },
+        }
+    }
+
+    /// Remove a given stylesheet from the set.
+    pub fn remove_stylesheet(
+        &mut self,
+        device: Option<&Device>,
+        sheet: S,
+        guard: &SharedRwLockReadGuard,
+    ) {
+        match self {
+            StylesheetSet::Author(set) => set.remove_stylesheet(device, sheet, guard),
+            StylesheetSet::Document(set) => set.remove_stylesheet(device, sheet, guard),
+        }
+    }
+}
+
 /// This macro defines methods common to DocumentStylesheetSet and
 /// AuthorStylesheetSet.
 ///
@@ -390,7 +452,8 @@ macro_rules! sheet_set_methods {
             guard: &SharedRwLockReadGuard,
         ) {
             if let Some(device) = device {
-                self.invalidations.collect_invalidations_for(device, sheet, guard);
+                self.invalidations
+                    .collect_invalidations_for(device, sheet, guard);
             }
         }
 
@@ -437,7 +500,7 @@ macro_rules! sheet_set_methods {
             let collection = self.collection_for(&sheet, guard);
             collection.remove(&sheet)
         }
-    }
+    };
 }
 
 impl<S> DocumentStylesheetSet<S>
@@ -585,6 +648,16 @@ where
     /// Whether the collection is empty.
     pub fn is_empty(&self) -> bool {
         self.collection.len() == 0
+    }
+
+    /// Returns the `index`th stylesheet in the collection of author styles if present.
+    pub fn get(&self, index: usize) -> Option<&S> {
+        self.collection.get(index)
+    }
+
+    /// Returns the number of author stylesheets.
+    pub fn len(&self) -> usize {
+        self.collection.len()
     }
 
     fn collection_for(
