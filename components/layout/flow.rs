@@ -29,22 +29,22 @@ use crate::block::{BlockFlow, FormattingContextType};
 use crate::context::LayoutContext;
 use crate::display_list::items::ClippingAndScrolling;
 use crate::display_list::{DisplayListBuildState, StackingContextCollectionState};
-use crate::flex::FlexFlow;
+//use crate::flex::FlexFlow;
 use crate::floats::{Floats, SpeculatedFloatPlacement};
 use crate::flow_list::{FlowList, FlowListIterator, MutFlowListIterator};
 use crate::flow_ref::{FlowRef, WeakFlowRef};
 use crate::fragment::{CoordinateSystem, Fragment, FragmentBorderBoxIterator, Overflow};
 use crate::inline::InlineFlow;
 use crate::model::{CollapsibleMargins, IntrinsicISizes, MarginCollapseInfo};
-use crate::multicol::MulticolFlow;
+//use crate::multicol::MulticolFlow;
 use crate::parallel::FlowParallelInfo;
-use crate::table::TableFlow;
-use crate::table_caption::TableCaptionFlow;
-use crate::table_cell::TableCellFlow;
-use crate::table_colgroup::TableColGroupFlow;
-use crate::table_row::TableRowFlow;
-use crate::table_rowgroup::TableRowGroupFlow;
-use crate::table_wrapper::TableWrapperFlow;
+//use crate::table::TableFlow;
+//use crate::table_caption::TableCaptionFlow;
+//use crate::table_cell::TableCellFlow;
+//use crate::table_colgroup::TableColGroupFlow;
+//use crate::table_row::TableRowFlow;
+//use crate::table_rowgroup::TableRowGroupFlow;
+//use crate::table_wrapper::TableWrapperFlow;
 use app_units::Au;
 use euclid::{Point2D, Rect, Size2D, Vector2D};
 use gfx_traits::print_tree::PrintTree;
@@ -126,14 +126,14 @@ pub trait Flow: HasBaseFlow + fmt::Debug + Sync + Send + 'static {
     }
 
     /// If this is a flex flow, returns the underlying object. Fails otherwise.
-    fn as_flex(&self) -> &FlexFlow {
-        panic!("called as_flex() on a non-flex flow")
-    }
+//    fn as_flex(&self) -> &FlexFlow {
+//        panic!("called as_flex() on a non-flex flow")
+//    }
 
     /// If this is a flex flow, returns the underlying object, borrowed mutably. Fails otherwise.
-    fn as_mut_flex(&mut self) -> &mut FlexFlow {
-        panic!("called as_mut_flex() on a non-flex flow")
-    }
+//    fn as_mut_flex(&mut self) -> &mut FlexFlow {
+//        panic!("called as_mut_flex() on a non-flex flow")
+//    }
 
     /// If this is an inline flow, returns the underlying object. Fails otherwise.
     fn as_inline(&self) -> &InlineFlow {
@@ -148,81 +148,81 @@ pub trait Flow: HasBaseFlow + fmt::Debug + Sync + Send + 'static {
 
     /// If this is a table wrapper flow, returns the underlying object, borrowed mutably. Fails
     /// otherwise.
-    fn as_mut_table_wrapper(&mut self) -> &mut TableWrapperFlow {
-        panic!("called as_mut_table_wrapper() on a non-tablewrapper flow")
-    }
+//    fn as_mut_table_wrapper(&mut self) -> &mut TableWrapperFlow {
+//        panic!("called as_mut_table_wrapper() on a non-tablewrapper flow")
+//    }
 
     /// If this is a table wrapper flow, returns the underlying object. Fails otherwise.
-    fn as_table_wrapper(&self) -> &TableWrapperFlow {
-        panic!("called as_table_wrapper() on a non-tablewrapper flow")
-    }
+//    fn as_table_wrapper(&self) -> &TableWrapperFlow {
+//        panic!("called as_table_wrapper() on a non-tablewrapper flow")
+//    }
 
     /// If this is a table flow, returns the underlying object, borrowed mutably. Fails otherwise.
-    fn as_mut_table(&mut self) -> &mut TableFlow {
-        panic!("called as_mut_table() on a non-table flow")
-    }
+//    fn as_mut_table(&mut self) -> &mut TableFlow {
+//        panic!("called as_mut_table() on a non-table flow")
+//    }
 
     /// If this is a table flow, returns the underlying object. Fails otherwise.
-    fn as_table(&self) -> &TableFlow {
-        panic!("called as_table() on a non-table flow")
-    }
+//    fn as_table(&self) -> &TableFlow {
+//        panic!("called as_table() on a non-table flow")
+//    }
 
     /// If this is a table colgroup flow, returns the underlying object, borrowed mutably. Fails
     /// otherwise.
-    fn as_mut_table_colgroup(&mut self) -> &mut TableColGroupFlow {
-        panic!("called as_mut_table_colgroup() on a non-tablecolgroup flow")
-    }
+//    fn as_mut_table_colgroup(&mut self) -> &mut TableColGroupFlow {
+//        panic!("called as_mut_table_colgroup() on a non-tablecolgroup flow")
+//    }
 
     /// If this is a table colgroup flow, returns the underlying object. Fails
     /// otherwise.
-    fn as_table_colgroup(&self) -> &TableColGroupFlow {
-        panic!("called as_table_colgroup() on a non-tablecolgroup flow")
-    }
+//    fn as_table_colgroup(&self) -> &TableColGroupFlow {
+//        panic!("called as_table_colgroup() on a non-tablecolgroup flow")
+//    }
 
     /// If this is a table rowgroup flow, returns the underlying object, borrowed mutably. Fails
     /// otherwise.
-    fn as_mut_table_rowgroup(&mut self) -> &mut TableRowGroupFlow {
-        panic!("called as_mut_table_rowgroup() on a non-tablerowgroup flow")
-    }
+//    fn as_mut_table_rowgroup(&mut self) -> &mut TableRowGroupFlow {
+//        panic!("called as_mut_table_rowgroup() on a non-tablerowgroup flow")
+//    }
 
     /// If this is a table rowgroup flow, returns the underlying object. Fails otherwise.
-    fn as_table_rowgroup(&self) -> &TableRowGroupFlow {
-        panic!("called as_table_rowgroup() on a non-tablerowgroup flow")
-    }
+//    fn as_table_rowgroup(&self) -> &TableRowGroupFlow {
+//        panic!("called as_table_rowgroup() on a non-tablerowgroup flow")
+//    }
 
     /// If this is a table row flow, returns the underlying object, borrowed mutably. Fails
     /// otherwise.
-    fn as_mut_table_row(&mut self) -> &mut TableRowFlow {
-        panic!("called as_mut_table_row() on a non-tablerow flow")
-    }
+//    fn as_mut_table_row(&mut self) -> &mut TableRowFlow {
+//        panic!("called as_mut_table_row() on a non-tablerow flow")
+//    }
 
     /// If this is a table row flow, returns the underlying object. Fails otherwise.
-    fn as_table_row(&self) -> &TableRowFlow {
-        panic!("called as_table_row() on a non-tablerow flow")
-    }
+//    fn as_table_row(&self) -> &TableRowFlow {
+//        panic!("called as_table_row() on a non-tablerow flow")
+//    }
 
     /// If this is a table cell flow, returns the underlying object, borrowed mutably. Fails
     /// otherwise.
-    fn as_mut_table_caption(&mut self) -> &mut TableCaptionFlow {
-        panic!("called as_mut_table_caption() on a non-tablecaption flow")
-    }
+//    fn as_mut_table_caption(&mut self) -> &mut TableCaptionFlow {
+//        panic!("called as_mut_table_caption() on a non-tablecaption flow")
+//    }
 
     /// If this is a table cell flow, returns the underlying object, borrowed mutably. Fails
     /// otherwise.
-    fn as_mut_table_cell(&mut self) -> &mut TableCellFlow {
-        panic!("called as_mut_table_cell() on a non-tablecell flow")
-    }
+//    fn as_mut_table_cell(&mut self) -> &mut TableCellFlow {
+//        panic!("called as_mut_table_cell() on a non-tablecell flow")
+//    }
 
     /// If this is a multicol flow, returns the underlying object, borrowed mutably. Fails
     /// otherwise.
-    fn as_mut_multicol(&mut self) -> &mut MulticolFlow {
-        panic!("called as_mut_multicol() on a non-multicol flow")
-    }
+//    fn as_mut_multicol(&mut self) -> &mut MulticolFlow {
+//        panic!("called as_mut_multicol() on a non-multicol flow")
+//    }
 
     /// If this is a table cell flow, returns the underlying object. Fails otherwise.
-    fn as_table_cell(&self) -> &TableCellFlow {
-        panic!("called as_table_cell() on a non-tablecell flow")
-    }
+//    fn as_table_cell(&self) -> &TableCellFlow {
+//        panic!("called as_table_cell() on a non-tablecell flow")
+//    }
 
     // Main methods
 

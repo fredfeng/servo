@@ -28,7 +28,7 @@ use crate::fragment::SpecificFragmentInfo;
 use crate::fragment::{CanvasFragmentSource, CoordinateSystem, Fragment, ScannedTextFragmentInfo};
 use crate::inline::InlineFragmentNodeFlags;
 use crate::model::MaybeAuto;
-use crate::table_cell::CollapsedBordersForCell;
+//use crate::table_cell::CollapsedBordersForCell;
 use app_units::{Au, AU_PER_PX};
 use canvas_traits::canvas::{CanvasMsg, FromLayoutMsg};
 use embedder_traits::Cursor;
@@ -1070,9 +1070,9 @@ impl Fragment {
 
         match border_painting_mode {
             BorderPaintingMode::Separate => {},
-            BorderPaintingMode::Collapse(collapsed_borders) => {
-                collapsed_borders.adjust_border_widths_for_painting(&mut border)
-            },
+//            BorderPaintingMode::Collapse(collapsed_borders) => {
+//                collapsed_borders.adjust_border_widths_for_painting(&mut border)
+//            },
             BorderPaintingMode::Hidden => return,
         }
 
@@ -1090,18 +1090,18 @@ impl Fragment {
             border_style_struct.border_left_style,
         );
 
-        if let BorderPaintingMode::Collapse(collapsed_borders) = border_painting_mode {
-            collapsed_borders.adjust_border_colors_and_styles_for_painting(
-                &mut colors,
-                &mut border_style,
-                style.writing_mode,
-            );
-        }
+//        if let BorderPaintingMode::Collapse(collapsed_borders) = border_painting_mode {
+//            collapsed_borders.adjust_border_colors_and_styles_for_painting(
+//                &mut colors,
+//                &mut border_style,
+//                style.writing_mode,
+//            );
+//        }
 
         // If this border collapses, then we draw outside the boundaries we were given.
-        if let BorderPaintingMode::Collapse(collapsed_borders) = border_painting_mode {
-            collapsed_borders.adjust_border_bounds_for_painting(&mut bounds, style.writing_mode)
-        }
+//        if let BorderPaintingMode::Collapse(collapsed_borders) = border_painting_mode {
+//            collapsed_borders.adjust_border_bounds_for_painting(&mut bounds, style.writing_mode)
+//        }
 
         // Append the border to the display list.
         let base = state.create_base_display_item(
@@ -2931,11 +2931,12 @@ fn modify_border_width_for_inline_sides(
 
 /// Describes how to paint the borders.
 #[derive(Clone, Copy)]
-pub enum BorderPaintingMode<'a> {
+//pub enum BorderPaintingMode<'a> {
+pub enum BorderPaintingMode {
     /// Paint borders separately (`border-collapse: separate`).
     Separate,
     /// Paint collapsed borders.
-    Collapse(&'a CollapsedBordersForCell),
+//    Collapse(&'a CollapsedBordersForCell),
     /// Paint no borders.
     Hidden,
 }

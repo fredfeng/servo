@@ -24,6 +24,7 @@ bitflags! {
 
 impl dyn Flow {
     pub fn compute_layout_damage(&mut self) -> SpecialRestyleDamage {
+        println!("inc1");
         let mut special_damage = SpecialRestyleDamage::empty();
         let is_absolutely_positioned = self
             .base()

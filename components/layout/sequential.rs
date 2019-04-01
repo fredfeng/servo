@@ -65,6 +65,9 @@ pub fn reflow(root: &mut dyn Flow, layout_context: &LayoutContext, relayout_mode
     let assign_block_sizes = AssignBSizes {
         layout_context: &layout_context,
     };
+    if relayout_mode == RelayoutMode::Incremental {
+        println!("relayout_mode: {:?}", "incremental");
+    }
 
     doit(root, assign_inline_sizes, assign_block_sizes, relayout_mode);
 }
