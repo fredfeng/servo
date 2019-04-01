@@ -1751,6 +1751,7 @@ impl LayoutThread {
 
                     if let Some(pool) = thread_pool {
                         // Parallel mode.
+                        println!("parallel");
                         LayoutThread::solve_constraints_parallel(
                             pool,
                             FlowRef::deref_mut(root_flow),
@@ -1759,6 +1760,7 @@ impl LayoutThread {
                             &*context,
                         );
                     } else {
+                        println!("sequential.");
                         //Sequential mode
                         LayoutThread::solve_constraints(FlowRef::deref_mut(root_flow), &context)
                     }
