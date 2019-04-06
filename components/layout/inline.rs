@@ -1360,74 +1360,6 @@ impl InlineFlow {
         self.base.restyle_damage = damage;
     }
 
-    // fn containing_block_range_for_flow_surrounding_fragment_at_index(
-    //     &self,
-    //     fragment_index: FragmentIndex,
-    // ) -> Range<FragmentIndex> {
-    //     let mut start_index = fragment_index;
-    //     while start_index > FragmentIndex(0) &&
-    //         self.fragments.fragments[(start_index - FragmentIndex(1)).get() as usize]
-    //             .is_positioned()
-    //     {
-    //         start_index = start_index - FragmentIndex(1)
-    //     }
-    //
-    //     let mut end_index = fragment_index + FragmentIndex(1);
-    //     while end_index < FragmentIndex(self.fragments.fragments.len() as isize) &&
-    //         self.fragments.fragments[end_index.get() as usize].is_positioned()
-    //     {
-    //         end_index = end_index + FragmentIndex(1)
-    //     }
-    //
-    //     Range::new(start_index, end_index - start_index)
-    // }
-
-    // fn containing_block_range_for_flow(&self, opaque_flow: OpaqueFlow) -> Range<FragmentIndex> {
-    //     match self
-    //         .fragments
-    //         .fragments
-    //         .iter()
-    //         .position(|fragment| match fragment.specific {
-    //             SpecificFragmentInfo::InlineAbsolute(ref inline_absolute) => {
-    //                 OpaqueFlow::from_flow(&*inline_absolute.flow_ref) == opaque_flow
-    //             },
-    //             SpecificFragmentInfo::InlineAbsoluteHypothetical(
-    //                 ref inline_absolute_hypothetical,
-    //             ) => OpaqueFlow::from_flow(&*inline_absolute_hypothetical.flow_ref) == opaque_flow,
-    //             _ => false,
-    //         }) {
-    //         Some(index) => {
-    //             let fragment_index = FragmentIndex(index as isize);
-    //             // XXX(nyazdani): Inlined `self.containing_block_range_for_flow_surrounding_fragment_at_index(...)`
-    //             let mut start_index = fragment_index;
-    //             while start_index > FragmentIndex(0) &&
-    //                 self.fragments.fragments[(start_index - FragmentIndex(1)).get() as usize]
-    //                     .is_positioned()
-    //             {
-    //                 start_index = start_index - FragmentIndex(1)
-    //             }
-    //
-    //             let mut end_index = fragment_index + FragmentIndex(1);
-    //             while end_index < FragmentIndex(self.fragments.fragments.len() as isize) &&
-    //                 self.fragments.fragments[end_index.get() as usize].is_positioned()
-    //             {
-    //                 end_index = end_index + FragmentIndex(1)
-    //             }
-    //
-    //             Range::new(start_index, end_index - start_index)
-    //         },
-    //         None => {
-    //             // FIXME(pcwalton): This is quite wrong. We should only return the range
-    //             // surrounding the inline fragments that constitute the containing block. But this
-    //             // suffices to get Google looking right.
-    //             Range::new(
-    //                 FragmentIndex(0),
-    //                 FragmentIndex(self.fragments.fragments.len() as isize),
-    //             )
-    //         },
-    //     }
-    // }
-
     pub fn baseline_offset_of_last_line(&self) -> Option<Au> {
         let fragments = &self.fragments.fragments;
         self.lines
@@ -1444,18 +1376,6 @@ impl InlineFlow {
         //     line.bounds.start.b + line.bounds.size.block - line.metrics.space_below_baseline
         // })
     }
-
-    // // Returns the last line that doesn't consist entirely of hypothetical boxes.
-    // fn last_line_containing_real_fragments(&self) -> Option<&Line> {
-    //     for line in self.lines.iter().rev() {
-    //         if (line.range.begin().get()..line.range.end().get())
-    //             .any(|index| !self.fragments.fragments[index as usize].is_hypothetical())
-    //         {
-    //             return Some(line);
-    //         }
-    //     }
-    //     None
-    // }
 
     fn build_display_list_for_inline_fragment_at_index(
         &mut self,
