@@ -685,6 +685,15 @@ impl BlockFlow {
         }
     }
 
+    fn assign_inline_position_for_root(&mut self, shared_context: &SharedStyleContext) {
+        debug!("Setting root position");
+        self.base.position.start = LogicalPoint::zero(self.base.writing_mode);
+        self.base.block_container_inline_size =
+            LogicalSize::from_physical(self.base.writing_mode, shared_context.viewport_size())
+                .inline;
+        self.base.block_container_writing_mode = self.base.writing_mode;
+    }
+
     /// Compute the actual inline size and position for this block.
     pub fn compute_used_inline_size(
         &mut self,
@@ -1657,7 +1666,7 @@ impl Flow for BlockFlow {
             .intersects(ServoRestyleDamage::REFLOW_OUT_OF_FLOW | ServoRestyleDamage::REFLOW)
         {
             debug!(
-                "assign_inline_sizes({}): assigning inline_size for flow",
+                "assign_inline_sizes: assigning inline_size for {}",
                 if self.base.flags.is_float() { "float" } else { "block" }
             );
 
@@ -1666,12 +1675,7 @@ impl Flow for BlockFlow {
             // If this is the root flow, initialize values that would normally be set by the parent.
             // XXX(nyazdani): This should be external to the main layout traversals.
             if self.is_root() {
-                debug!("Setting root position");
-                self.base.position.start = LogicalPoint::zero(self.base.writing_mode);
-                self.base.block_container_inline_size =
-                    LogicalSize::from_physical(self.base.writing_mode, shared_context.viewport_size())
-                        .inline;
-                self.base.block_container_writing_mode = self.base.writing_mode;
+                self.assign_inline_position_for_root(shared_context);
             }
 
             // Our inline-size was set to the inline-size of the containing block by the flow's parent.
@@ -1719,7 +1723,6 @@ impl Flow for BlockFlow {
 
         let content_inline_size = self.fragment.border_box.size.inline - padding_and_borders;
 
-        // XXX(nyazdani): Inlined `self.propagate_assigned_inline_size_to_children(...)
         // Assigns the computed inline-start content edge and inline-size to all the children of this
         // block flow. The given `callback`, if supplied, will be called once per child; it is
         // currently used to push down column sizes for tables.
@@ -1740,39 +1743,36 @@ impl Flow for BlockFlow {
         // https://drafts.csswg.org/css-ui-3/#box-sizing
         let mut explicit_content_size = match self.fragment.style().content_block_size() {
             Size::Auto => {
-                match parent_container_size {
-                    None => None,
-                    Some(container_size) => {
-                        let position = self.fragment.style().logical_position();
-                        let block_start = MaybeAuto::from_style(position.block_start, container_size);
-                        let block_end = MaybeAuto::from_style(position.block_end, container_size);
+                parent_container_size.and_then(|container_size| {
+                    let position = self.fragment.style().logical_position();
+                    let block_start = MaybeAuto::from_style(position.block_start, container_size);
+                    let block_end = MaybeAuto::from_style(position.block_end, container_size);
 
-                        match (block_start, block_end) {
-                            (MaybeAuto::Specified(block_start), MaybeAuto::Specified(block_end)) => {
-                                let available_block_size =
-                                    container_size - self.fragment.border_padding.block_start_end();
+                    match (block_start, block_end) {
+                        (MaybeAuto::Specified(block_start), MaybeAuto::Specified(block_end)) => {
+                            let available_block_size =
+                                container_size - self.fragment.border_padding.block_start_end();
 
-                                // Non-auto margin-block-start and margin-block-end values have already been
-                                // calculated during assign-inline-size.
-                                let margin = self.fragment.style().logical_margin();
-                                let margin_block_start = match margin.block_start {
-                                    LengthPercentageOrAuto::Auto => MaybeAuto::Auto,
-                                    _ => MaybeAuto::Specified(self.fragment.margin.block_start),
-                                };
-                                let margin_block_end = match margin.block_end {
-                                    LengthPercentageOrAuto::Auto => MaybeAuto::Auto,
-                                    _ => MaybeAuto::Specified(self.fragment.margin.block_end),
-                                };
+                            // Non-auto margin-block-start and margin-block-end values have already been
+                            // calculated during assign-inline-size.
+                            let margin = self.fragment.style().logical_margin();
+                            let margin_block_start = match margin.block_start {
+                                LengthPercentageOrAuto::Auto => MaybeAuto::Auto,
+                                _ => MaybeAuto::Specified(self.fragment.margin.block_start),
+                            };
+                            let margin_block_end = match margin.block_end {
+                                LengthPercentageOrAuto::Auto => MaybeAuto::Auto,
+                                _ => MaybeAuto::Specified(self.fragment.margin.block_end),
+                            };
 
-                                let margin_block_start = margin_block_start.specified_or_zero();
-                                let margin_block_end = margin_block_end.specified_or_zero();
-                                let sum = block_start + block_end + margin_block_start + margin_block_end;
-                                Some(available_block_size - sum)
-                            },
-                            (_, _) => None,
-                        }
-                    },
-                }
+                            let margin_block_start = margin_block_start.specified_or_zero();
+                            let margin_block_end = margin_block_end.specified_or_zero();
+                            let sum = block_start + block_end + margin_block_start + margin_block_end;
+                            Some(available_block_size - sum)
+                        },
+                        (_, _) => None,
+                    }
+                })
             },
             Size::LengthPercentage(ref lp) => lp.maybe_to_used_value(parent_container_size),
         }.map(|x| {
@@ -1867,6 +1867,233 @@ impl Flow for BlockFlow {
             }
         }
     }
+
+    // /// Recursively (top-down) determines the actual inline-size of child contexts and fragments.
+    // /// When called on this context, the context has had its inline-size set by the parent context.
+    // ///
+    // /// Dual fragments consume some inline-size first, and the remainder is assigned to all child
+    // /// (block) contexts.
+    // fn assign_inline_sizes(&mut self, layout_context: &LayoutContext) { // XXX(nyazdani): Visitor
+    //     let _scope = layout_debug_scope!("block::assign_inline_sizes {:x}", self.base.debug_id());
+    //
+    //     let shared_context = layout_context.shared_context();
+    //     // XXX(nyazdani): Inlined `self.compute_inline_sizes(...)`
+    //     if self
+    //         .base
+    //         .restyle_damage
+    //         .intersects(ServoRestyleDamage::REFLOW_OUT_OF_FLOW | ServoRestyleDamage::REFLOW)
+    //     {
+    //         debug!(
+    //             "assign_inline_sizes({}): assigning inline_size for flow",
+    //             if self.base.flags.is_float() { "float" } else { "block" }
+    //         );
+    //
+    //         self.base.floats = Floats::new(self.base.writing_mode);
+    //
+    //         // If this is the root flow, initialize values that would normally be set by the parent.
+    //         // XXX(nyazdani): This should be external to the main layout traversals.
+    //         if self.is_root() {
+    //             debug!("Setting root position");
+    //             self.base.position.start = LogicalPoint::zero(self.base.writing_mode);
+    //             self.base.block_container_inline_size =
+    //                 LogicalSize::from_physical(self.base.writing_mode, shared_context.viewport_size())
+    //                     .inline;
+    //             self.base.block_container_writing_mode = self.base.writing_mode;
+    //         }
+    //
+    //         // Our inline-size was set to the inline-size of the containing block by the flow's parent.
+    //         // Now compute the real value.
+    //         // Compute inline size based using the `block_container_inline_size` set by the parent flow.
+    //         // Compute the actual inline size and position for this block.
+    //         self.compute_used_inline_size(shared_context, self.base.block_container_inline_size);
+    //         if self.base.flags.is_float() {
+    //             self.float.as_mut().unwrap().containing_inline_size =
+    //                 self.base.block_container_inline_size
+    //         }
+    //
+    //         // We don't need to guess anything unless this is a block formatting context.
+    //         // If `max-width` is set, then don't perform this speculation. We guess that the
+    //         // page set `max-width` in order to avoid hitting floats. The search box on Google
+    //         // SERPs falls into this category.
+    //         if
+    //             self.formatting_context_type() == FormattingContextType::Block
+    //             && self.fragment.style.max_inline_size() == MaxSize::None
+    //         {
+    //             // At this point, we know we can't precisely compute the inline-size of this block now,
+    //             // because floats might affect it. Speculate that its inline-size is equal to the
+    //             // inline-size computed above minus the inline-size of the previous left and/or right
+    //             // floats.
+    //             let left = self.base.speculated_float_placement_in.left;
+    //             let margin = self.fragment.margin.inline_start;
+    //             let left_size = if margin >= Au(0) { max(left - margin, Au(0)) } else { Au(0) };
+    //             let right = self.base.speculated_float_placement_in.right;
+    //             let margin = self.fragment.margin.inline_end;
+    //             let right_size = if margin >= Au(0) { max(right - margin, Au(0)) } else { Au(0) };
+    //             self.fragment.border_box.size.inline =
+    //                 self.fragment.border_box.size.inline - left_size - right_size
+    //         }
+    //     }
+    //
+    //     // Move in from the inline-start border edge.
+    //     let inline_start_content_edge =
+    //         self.fragment.border_box.start.i + self.fragment.border_padding.inline_start;
+    //
+    //     let padding_and_borders = self.fragment.border_padding.inline_start_end();
+    //
+    //     // Distance from the inline-end margin edge to the inline-end content edge.
+    //     let inline_end_content_edge =
+    //         self.fragment.margin.inline_end + self.fragment.border_padding.inline_end;
+    //
+    //     let content_inline_size = self.fragment.border_box.size.inline - padding_and_borders;
+    //
+    //     // XXX(nyazdani): Inlined `self.propagate_assigned_inline_size_to_children(...)
+    //     // Assigns the computed inline-start content edge and inline-size to all the children of this
+    //     // block flow. The given `callback`, if supplied, will be called once per child; it is
+    //     // currently used to push down column sizes for tables.
+    //     //
+    //     // `#[inline(always)]` because this is called only from block or table inline-size assignment
+    //     // and the code for block layout is significantly simpler.
+    //
+    //     let flags = self.base.flags.clone();
+    //
+    //     let opaque_self = OpaqueFlow::from_flow(self);
+    //
+    //     // Calculate non-auto block size to pass to children.
+    //     let box_border = match self.fragment.style().get_position().box_sizing {
+    //         BoxSizing::BorderBox => self.fragment.border_padding.block_start_end(),
+    //         BoxSizing::ContentBox => Au(0),
+    //     };
+    //     let parent_container_size = self.explicit_block_containing_size(shared_context);
+    //     // https://drafts.csswg.org/css-ui-3/#box-sizing
+    //     let mut explicit_content_size = match self.fragment.style().content_block_size() {
+    //         Size::Auto => {
+    //             match parent_container_size {
+    //                 None => None,
+    //                 Some(container_size) => {
+    //                     let position = self.fragment.style().logical_position();
+    //                     let block_start = MaybeAuto::from_style(position.block_start, container_size);
+    //                     let block_end = MaybeAuto::from_style(position.block_end, container_size);
+    //
+    //                     match (block_start, block_end) {
+    //                         (MaybeAuto::Specified(block_start), MaybeAuto::Specified(block_end)) => {
+    //                             let available_block_size =
+    //                                 container_size - self.fragment.border_padding.block_start_end();
+    //
+    //                             // Non-auto margin-block-start and margin-block-end values have already been
+    //                             // calculated during assign-inline-size.
+    //                             let margin = self.fragment.style().logical_margin();
+    //                             let margin_block_start = match margin.block_start {
+    //                                 LengthPercentageOrAuto::Auto => MaybeAuto::Auto,
+    //                                 _ => MaybeAuto::Specified(self.fragment.margin.block_start),
+    //                             };
+    //                             let margin_block_end = match margin.block_end {
+    //                                 LengthPercentageOrAuto::Auto => MaybeAuto::Auto,
+    //                                 _ => MaybeAuto::Specified(self.fragment.margin.block_end),
+    //                             };
+    //
+    //                             let margin_block_start = margin_block_start.specified_or_zero();
+    //                             let margin_block_end = margin_block_end.specified_or_zero();
+    //                             let sum = block_start + block_end + margin_block_start + margin_block_end;
+    //                             Some(available_block_size - sum)
+    //                         },
+    //                         (_, _) => None,
+    //                     }
+    //                 },
+    //             }
+    //         },
+    //         Size::LengthPercentage(ref lp) => lp.maybe_to_used_value(parent_container_size),
+    //     }.map(|x| {
+    //         if x < box_border {
+    //             Au(0)
+    //         } else {
+    //             x - box_border
+    //         }
+    //     });
+    //     if self.is_root() {
+    //         explicit_content_size = max(parent_container_size, explicit_content_size);
+    //     }
+    //     // Calculate containing block inline size.
+    //     let containing_block_size = if flags.contains(FlowFlags::IS_ABSOLUTELY_POSITIONED) {
+    //         // XXX(nyazdani): Inlined `self.containing_block_size(...)`
+    //         // Right now, this only gets the containing block size for absolutely positioned elements.
+    //         // Note: We assume this is in a top-down traversal, so it is ok to reference the CB.
+    //         //debug_assert!(self.base.flags.contains(FlowFlags::IS_ABSOLUTELY_POSITIONED));
+    //         if self.is_fixed() || self.is_root() {
+    //             // Initial containing block is the CB for the root
+    //             LogicalSize::from_physical(self.base.writing_mode, shared_context.viewport_size()).inline
+    //         } else {
+    //             self.base.absolute_cb.generated_containing_block_size(opaque_self).inline
+    //         }
+    //     } else {
+    //         content_inline_size
+    //     };
+    //     // FIXME (mbrubeck): Get correct mode for absolute containing block
+    //     let containing_block_mode = self.base.writing_mode;
+    //
+    //     let mut inline_start_margin_edge = inline_start_content_edge;
+    //     let mut inline_end_margin_edge = inline_end_content_edge;
+    //
+    //     let mut iterator = self.base.child_iter_mut().enumerate().peekable();
+    //     while let Some((i, kid)) = iterator.next() {
+    //         kid.mut_base().block_container_explicit_block_size = explicit_content_size;
+    //
+    //         // The inline-start margin edge of the child flow is at our inline-start content edge,
+    //         // and its inline-size is our content inline-size.
+    //         let kid_mode = kid.base().writing_mode;
+    //         {
+    //             // Don't assign positions to children unless they're going to be reflowed.
+    //             // Otherwise, the position we assign might be incorrect and never fixed up. (Issue
+    //             // #13704.)
+    //             //
+    //             // For instance, floats have their true inline position calculated in
+    //             // `assign_block_size()`, which won't do anything unless `REFLOW` is set. So, if a
+    //             // float child does not have `REFLOW` set, we must be careful to avoid touching its
+    //             // inline position, as no logic will run afterward to set its true value.
+    //             let kid_base = kid.mut_base();
+    //             let reflow_damage = if kid_base.flags.contains(FlowFlags::IS_ABSOLUTELY_POSITIONED)
+    //             {
+    //                 ServoRestyleDamage::REFLOW_OUT_OF_FLOW
+    //             } else {
+    //                 ServoRestyleDamage::REFLOW
+    //             };
+    //             if kid_base
+    //                 .flags
+    //                 .contains(FlowFlags::INLINE_POSITION_IS_STATIC) &&
+    //                 kid_base.restyle_damage.contains(reflow_damage)
+    //             {
+    //                 kid_base.position.start.i =
+    //                     if kid_mode.is_bidi_ltr() == containing_block_mode.is_bidi_ltr() {
+    //                         inline_start_content_edge
+    //                     } else {
+    //                         // The kid's inline 'start' is at the parent's 'end'
+    //                         inline_end_content_edge
+    //                     };
+    //             }
+    //             kid_base.block_container_inline_size = content_inline_size;
+    //             kid_base.block_container_writing_mode = containing_block_mode;
+    //         }
+    //
+    //         // Per CSS 2.1 § 16.3.1, text alignment propagates to all children in flow.
+    //         //
+    //         // TODO(#2265, pcwalton): Do this in the cascade instead.
+    //         let containing_block_text_align = self.fragment.style().get_inherited_text().text_align;
+    //         kid.mut_base()
+    //             .flags
+    //             .set_text_align(containing_block_text_align);
+    //
+    //         // Handle `text-indent` on behalf of any inline children that we have. This is
+    //         // necessary because any percentages are relative to the containing block, which only
+    //         // we know.
+    //         if kid.is_inline_flow() {
+    //             kid.as_mut_inline().first_line_indentation = self
+    //                 .fragment
+    //                 .style()
+    //                 .get_inherited_text()
+    //                 .text_indent
+    //                 .to_used_value(containing_block_size);
+    //         }
+    //     }
+    // }
 
     fn place_float_if_applicable<'a>(&mut self) {
         if self.base.flags.is_float() {
