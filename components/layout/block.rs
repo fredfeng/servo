@@ -1320,14 +1320,10 @@ impl BlockFlow {
                 _ => MaybeAuto::Specified(self.fragment.margin.block_end),
             };
 
-            let block_start;
-            let block_end;
-            {
-                let position = self.fragment.style().logical_position();
-                block_start =
-                    MaybeAuto::from_style(position.block_start, containing_block_block_size);
-                block_end = MaybeAuto::from_style(position.block_end, containing_block_block_size);
-            }
+            let position = self.fragment.style().logical_position();
+            let block_start =
+                MaybeAuto::from_style(position.block_start, containing_block_block_size);
+            let block_end = MaybeAuto::from_style(position.block_end, containing_block_block_size);
 
             let available_block_size =
                 containing_block_block_size - self.fragment.border_padding.block_start_end();
@@ -1356,6 +1352,7 @@ impl BlockFlow {
                 let mut candidate_block_size_iterator =
                     CandidateBSizeIterator::new(&self.fragment, Some(containing_block_block_size));
 
+                // XXX(nyazdani): This loop needs refactoring.
                 // Can't use `for` because we assign to
                 // `candidate_block_size_iterator.candidate_value`.
                 while let Some(block_size_used_val) = candidate_block_size_iterator.next() {
@@ -1659,7 +1656,6 @@ impl Flow for BlockFlow {
         let _scope = layout_debug_scope!("block::assign_inline_sizes {:x}", self.base.debug_id());
 
         let shared_context = layout_context.shared_context();
-        // XXX(nyazdani): Inlined `self.compute_inline_sizes(...)`
         if self
             .base
             .restyle_damage
@@ -1673,7 +1669,6 @@ impl Flow for BlockFlow {
             self.base.floats = Floats::new(self.base.writing_mode);
 
             // If this is the root flow, initialize values that would normally be set by the parent.
-            // XXX(nyazdani): This should be external to the main layout traversals.
             if self.is_root() {
                 self.assign_inline_position_for_root(shared_context);
             }
@@ -1803,48 +1798,43 @@ impl Flow for BlockFlow {
         // FIXME (mbrubeck): Get correct mode for absolute containing block
         let containing_block_mode = self.base.writing_mode;
 
-        let mut inline_start_margin_edge = inline_start_content_edge;
-        let mut inline_end_margin_edge = inline_end_content_edge;
-
-        let mut iterator = self.base.child_iter_mut().enumerate().peekable();
-        while let Some((i, kid)) = iterator.next() {
+        for kid in self.base.child_iter_mut() {
             kid.mut_base().block_container_explicit_block_size = explicit_content_size;
 
             // The inline-start margin edge of the child flow is at our inline-start content edge,
             // and its inline-size is our content inline-size.
             let kid_mode = kid.base().writing_mode;
+
+            // Don't assign positions to children unless they're going to be reflowed.
+            // Otherwise, the position we assign might be incorrect and never fixed up. (Issue
+            // #13704.)
+            //
+            // For instance, floats have their true inline position calculated in
+            // `assign_block_size()`, which won't do anything unless `REFLOW` is set. So, if a
+            // float child does not have `REFLOW` set, we must be careful to avoid touching its
+            // inline position, as no logic will run afterward to set its true value.
+            //let kid_base = kid.mut_base();
+            let reflow_damage = if kid.base().flags.contains(FlowFlags::IS_ABSOLUTELY_POSITIONED)
             {
-                // Don't assign positions to children unless they're going to be reflowed.
-                // Otherwise, the position we assign might be incorrect and never fixed up. (Issue
-                // #13704.)
-                //
-                // For instance, floats have their true inline position calculated in
-                // `assign_block_size()`, which won't do anything unless `REFLOW` is set. So, if a
-                // float child does not have `REFLOW` set, we must be careful to avoid touching its
-                // inline position, as no logic will run afterward to set its true value.
-                let kid_base = kid.mut_base();
-                let reflow_damage = if kid_base.flags.contains(FlowFlags::IS_ABSOLUTELY_POSITIONED)
-                {
-                    ServoRestyleDamage::REFLOW_OUT_OF_FLOW
-                } else {
-                    ServoRestyleDamage::REFLOW
-                };
-                if kid_base
-                    .flags
-                    .contains(FlowFlags::INLINE_POSITION_IS_STATIC) &&
-                    kid_base.restyle_damage.contains(reflow_damage)
-                {
-                    kid_base.position.start.i =
-                        if kid_mode.is_bidi_ltr() == containing_block_mode.is_bidi_ltr() {
-                            inline_start_content_edge
-                        } else {
-                            // The kid's inline 'start' is at the parent's 'end'
-                            inline_end_content_edge
-                        };
-                }
-                kid_base.block_container_inline_size = content_inline_size;
-                kid_base.block_container_writing_mode = containing_block_mode;
+                ServoRestyleDamage::REFLOW_OUT_OF_FLOW
+            } else {
+                ServoRestyleDamage::REFLOW
+            };
+            if kid.base()
+                .flags
+                .contains(FlowFlags::INLINE_POSITION_IS_STATIC) &&
+                kid.base().restyle_damage.contains(reflow_damage)
+            {
+                kid.mut_base().position.start.i =
+                    if kid_mode.is_bidi_ltr() == containing_block_mode.is_bidi_ltr() {
+                        inline_start_content_edge
+                    } else {
+                        // The kid's inline 'start' is at the parent's 'end'
+                        inline_end_content_edge
+                    };
             }
+            kid.mut_base().block_container_inline_size = content_inline_size;
+            kid.mut_base().block_container_writing_mode = containing_block_mode;
 
             // Per CSS 2.1 § 16.3.1, text alignment propagates to all children in flow.
             //
@@ -2097,81 +2087,79 @@ impl Flow for BlockFlow {
 
     fn place_float_if_applicable<'a>(&mut self) {
         if self.base.flags.is_float() {
-            { // XXX(nyazdani): Inlined `self.place_float()`
-                // Add placement information about current float flow for use by the parent.
-                //
-                // Also, use information given by parent about other floats to find out our relative position.
-                //
-                // This does not give any information about any float descendants because they do not affect
-                // elements outside of the subtree rooted at this float.
-                //
-                // This function is called on a kid flow by a parent. Therefore, `assign_block_size_float` was
-                // already called on this kid flow by the traversal function. So, the values used are
-                // well-defined.
-                let block_size = self.fragment.border_box.size.block;
-                let clearance = match self.fragment.clear() {
-                    None => Au(0),
-                    Some(clear) => self.base.floats.clearance(clear),
-                };
+            // Add placement information about current float flow for use by the parent.
+            //
+            // Also, use information given by parent about other floats to find out our relative position.
+            //
+            // This does not give any information about any float descendants because they do not affect
+            // elements outside of the subtree rooted at this float.
+            //
+            // This function is called on a kid flow by a parent. Therefore, `assign_block_size_float` was
+            // already called on this kid flow by the traversal function. So, the values used are
+            // well-defined.
+            let block_size = self.fragment.border_box.size.block;
+            let clearance = match self.fragment.clear() {
+                None => Au(0),
+                Some(clear) => self.base.floats.clearance(clear),
+            };
 
-                let float_info: FloatedBlockInfo = (**self.float.as_ref().unwrap()).clone();
+            let float_info: FloatedBlockInfo = (**self.float.as_ref().unwrap()).clone();
 
-                // Our `position` field accounts for positive margins, but not negative margins. (See
-                // calculation of `extra_inline_size_from_margin` below.) Negative margins must be taken
-                // into account for float placement, however. So we add them in here.
-                let inline_size_for_float_placement =
-                    self.base.position.size.inline + min(Au(0), self.fragment.margin.inline_start_end());
+            // Our `position` field accounts for positive margins, but not negative margins. (See
+            // calculation of `extra_inline_size_from_margin` below.) Negative margins must be taken
+            // into account for float placement, however. So we add them in here.
+            let inline_size_for_float_placement =
+                self.base.position.size.inline + min(Au(0), self.fragment.margin.inline_start_end());
 
-                let info = PlacementInfo {
-                    size: LogicalSize::new(
-                        self.fragment.style.writing_mode,
-                        inline_size_for_float_placement,
-                        block_size + self.fragment.margin.block_start_end(),
-                    )
-                    .convert(
-                        self.fragment.style.writing_mode,
-                        self.base.floats.writing_mode,
-                    ),
-                    ceiling: clearance + float_info.float_ceiling,
-                    max_inline_size: float_info.containing_inline_size,
-                    kind: float_info.float_kind,
-                };
+            let info = PlacementInfo {
+                size: LogicalSize::new(
+                    self.fragment.style.writing_mode,
+                    inline_size_for_float_placement,
+                    block_size + self.fragment.margin.block_start_end(),
+                )
+                .convert(
+                    self.fragment.style.writing_mode,
+                    self.base.floats.writing_mode,
+                ),
+                ceiling: clearance + float_info.float_ceiling,
+                max_inline_size: float_info.containing_inline_size,
+                kind: float_info.float_kind,
+            };
 
-                // Place the float and return the `Floats` back to the parent flow.
-                // After, grab the position and use that to set our position.
-                self.base.floats.add_float(&info);
+            // Place the float and return the `Floats` back to the parent flow.
+            // After, grab the position and use that to set our position.
+            self.base.floats.add_float(&info);
 
-                // FIXME (mbrubeck) Get the correct container size for self.base.floats;
-                let container_size = Size2D::new(self.base.block_container_inline_size, Au(0));
+            // FIXME (mbrubeck) Get the correct container size for self.base.floats;
+            let container_size = Size2D::new(self.base.block_container_inline_size, Au(0));
 
-                // Move in from the margin edge, as per CSS 2.1 § 9.5, floats may not overlap anything on
-                // their margin edges.
-                let float_offset = self
-                    .base
-                    .floats
-                    .last_float_pos()
-                    .unwrap()
-                    .convert(
-                        self.base.floats.writing_mode,
-                        self.base.writing_mode,
-                        container_size,
-                    )
-                    .start;
-                let margin_offset = LogicalPoint::new(
+            // Move in from the margin edge, as per CSS 2.1 § 9.5, floats may not overlap anything on
+            // their margin edges.
+            let float_offset = self
+                .base
+                .floats
+                .last_float_pos()
+                .unwrap()
+                .convert(
+                    self.base.floats.writing_mode,
                     self.base.writing_mode,
-                    Au(0),
-                    self.fragment.margin.block_start,
-                );
+                    container_size,
+                )
+                .start;
+            let margin_offset = LogicalPoint::new(
+                self.base.writing_mode,
+                Au(0),
+                self.fragment.margin.block_start,
+            );
 
-                let mut origin = LogicalPoint::new(
-                    self.base.writing_mode,
-                    self.base.position.start.i,
-                    self.base.position.start.b,
-                );
-                origin = origin.add_point(&float_offset).add_point(&margin_offset);
-                self.base.position =
-                    LogicalRect::from_point_size(self.base.writing_mode, origin, self.base.position.size);
-            }
+            let mut origin = LogicalPoint::new(
+                self.base.writing_mode,
+                self.base.position.start.i,
+                self.base.position.start.b,
+            );
+            origin = origin.add_point(&float_offset).add_point(&margin_offset);
+            self.base.position =
+                LogicalRect::from_point_size(self.base.writing_mode, origin, self.base.position.size);
         }
     }
 
@@ -3195,15 +3183,15 @@ impl ISizeAndMarginsComputer for AbsoluteNonReplaced {
 
                     // Set inline-end to zero to calculate inline-size.
                     let inline_size = { // XXX(nyazdani): Inlined `block.get_shrink_to_fit_inline_size(...)`
-                        /// Return shrink-to-fit inline-size.
-                        ///
-                        /// This is where we use the preferred inline-sizes and minimum inline-sizes
-                        /// calculated in the bubble-inline-sizes traversal.
+                        // Return shrink-to-fit inline-size.
+                        //
+                        // This is where we use the preferred inline-sizes and minimum inline-sizes
+                        // calculated in the bubble-inline-sizes traversal.
 
                         let content_intrinsic_inline_sizes = { // XXX(nyazdani): Inlined `self.content_intrinsic_inline_sizes(...)`
-                            /// Computes the content portion (only) of the intrinsic inline sizes of this flow. This is
-                            /// used for calculating shrink-to-fit width. Assumes that intrinsic sizes have already been
-                            /// computed for this flow.
+                            // Computes the content portion (only) of the intrinsic inline sizes of this flow. This is
+                            // used for calculating shrink-to-fit width. Assumes that intrinsic sizes have already been
+                            // computed for this flow.
                             let (border_padding, margin) = block.fragment.surrounding_intrinsic_inline_size();
                             IntrinsicISizes {
                                 minimum_inline_size: block.base.intrinsic_inline_sizes.minimum_inline_size -
@@ -3338,15 +3326,15 @@ impl ISizeAndMarginsComputer for AbsoluteNonReplaced {
                     let margin_end = inline_end_margin.specified_or_zero();
                     // Set inline-end to zero to calculate inline-size
                     let inline_size = { // XXX(nyazdani): Inlined `block.get_shrink_to_fit_inline_size(...)`
-                        /// Return shrink-to-fit inline-size.
-                        ///
-                        /// This is where we use the preferred inline-sizes and minimum inline-sizes
-                        /// calculated in the bubble-inline-sizes traversal.
+                        // Return shrink-to-fit inline-size.
+                        //
+                        // This is where we use the preferred inline-sizes and minimum inline-sizes
+                        // calculated in the bubble-inline-sizes traversal.
 
                         let content_intrinsic_inline_sizes = { // XXX(nyazdani): Inlined `self.content_intrinsic_inline_sizes(...)`
-                            /// Computes the content portion (only) of the intrinsic inline sizes of this flow. This is
-                            /// used for calculating shrink-to-fit width. Assumes that intrinsic sizes have already been
-                            /// computed for this flow.
+                            // Computes the content portion (only) of the intrinsic inline sizes of this flow. This is
+                            // used for calculating shrink-to-fit width. Assumes that intrinsic sizes have already been
+                            // computed for this flow.
                             let (border_padding, margin) = block.fragment.surrounding_intrinsic_inline_size();
                             IntrinsicISizes {
                                 minimum_inline_size: block.base.intrinsic_inline_sizes.minimum_inline_size -
@@ -3372,15 +3360,15 @@ impl ISizeAndMarginsComputer for AbsoluteNonReplaced {
                     let margin_end = inline_end_margin.specified_or_zero();
                     // Set inline-start to zero to calculate inline-size
                     let inline_size = { // XXX(nyazdani): Inlined `block.get_shrink_to_fit_inline_size(...)`
-                        /// Return shrink-to-fit inline-size.
-                        ///
-                        /// This is where we use the preferred inline-sizes and minimum inline-sizes
-                        /// calculated in the bubble-inline-sizes traversal.
+                        // Return shrink-to-fit inline-size.
+                        //
+                        // This is where we use the preferred inline-sizes and minimum inline-sizes
+                        // calculated in the bubble-inline-sizes traversal.
 
                         let content_intrinsic_inline_sizes = { // XXX(nyazdani): Inlined `self.content_intrinsic_inline_sizes(...)`
-                            /// Computes the content portion (only) of the intrinsic inline sizes of this flow. This is
-                            /// used for calculating shrink-to-fit width. Assumes that intrinsic sizes have already been
-                            /// computed for this flow.
+                            // Computes the content portion (only) of the intrinsic inline sizes of this flow. This is
+                            // used for calculating shrink-to-fit width. Assumes that intrinsic sizes have already been
+                            // computed for this flow.
                             let (border_padding, margin) = block.fragment.surrounding_intrinsic_inline_size();
                             IntrinsicISizes {
                                 minimum_inline_size: block.base.intrinsic_inline_sizes.minimum_inline_size -
@@ -3432,11 +3420,11 @@ impl ISizeAndMarginsComputer for AbsoluteNonReplaced {
     ) -> Au {
         let opaque_block = OpaqueFlow::from_flow(block);
         { // XXX(nyazdani): Inlined `block.containing_block_size(...)`
-            /// Return the size of the containing block for the given immediate absolute descendant of this
-            /// flow.
-            ///
-            /// Right now, this only gets the containing block size for absolutely positioned elements.
-            /// Note: We assume this is called in a top-down traversal, so it is ok to reference the CB.
+            // Return the size of the containing block for the given immediate absolute descendant of this
+            // flow.
+            //
+            // Right now, this only gets the containing block size for absolutely positioned elements.
+            // Note: We assume this is called in a top-down traversal, so it is ok to reference the CB.
             let viewport_size = &shared_context.viewport_size();
             let descendant = opaque_block;
             debug_assert!(block.base.flags.contains(FlowFlags::IS_ABSOLUTELY_POSITIONED));
@@ -3589,11 +3577,11 @@ impl ISizeAndMarginsComputer for AbsoluteReplaced {
     ) -> MaybeAuto {
         let opaque_block = OpaqueFlow::from_flow(block);
         let containing_block_inline_size = { // XXX(nyazdani): Inlined `block.containing_block_size(...)`
-            /// Return the size of the containing block for the given immediate absolute descendant of this
-            /// flow.
-            ///
-            /// Right now, this only gets the containing block size for absolutely positioned elements.
-            /// Note: We assume this is called in a top-down traversal, so it is ok to reference the CB.
+            // Return the size of the containing block for the given immediate absolute descendant of this
+            // flow.
+            //
+            // Right now, this only gets the containing block size for absolutely positioned elements.
+            // Note: We assume this is called in a top-down traversal, so it is ok to reference the CB.
             let viewport_size = &shared_context.viewport_size();
             let descendant = opaque_block;
             debug_assert!(block.base.flags.contains(FlowFlags::IS_ABSOLUTELY_POSITIONED));
@@ -3623,11 +3611,11 @@ impl ISizeAndMarginsComputer for AbsoluteReplaced {
     ) -> Au {
         let opaque_block = OpaqueFlow::from_flow(block);
         { // XXX(nyazdani): Inlined `block.containing_block_size(...)`
-            /// Return the size of the containing block for the given immediate absolute descendant of this
-            /// flow.
-            ///
-            /// Right now, this only gets the containing block size for absolutely positioned elements.
-            /// Note: We assume this is called in a top-down traversal, so it is ok to reference the CB.
+            // Return the size of the containing block for the given immediate absolute descendant of this
+            // flow.
+            //
+            // Right now, this only gets the containing block size for absolutely positioned elements.
+            // Note: We assume this is called in a top-down traversal, so it is ok to reference the CB.
             let viewport_size = &shared_context.viewport_size();
             let descendant = opaque_block;
             debug_assert!(block.base.flags.contains(FlowFlags::IS_ABSOLUTELY_POSITIONED));
@@ -3719,15 +3707,15 @@ impl ISizeAndMarginsComputer for FloatNonReplaced {
         let available_inline_size_float =
             available_inline_size - margin_inline_start - margin_inline_end;
         let shrink_to_fit = { // XXX(nyazdani): Inlined `block.get_shrink_to_fit_inline_size(...)`
-            /// Return shrink-to-fit inline-size.
-            ///
-            /// This is where we use the preferred inline-sizes and minimum inline-sizes
-            /// calculated in the bubble-inline-sizes traversal.
+            // Return shrink-to-fit inline-size.
+            //
+            // This is where we use the preferred inline-sizes and minimum inline-sizes
+            // calculated in the bubble-inline-sizes traversal.
 
             let content_intrinsic_inline_sizes = { // XXX(nyazdani): Inlined `self.content_intrinsic_inline_sizes(...)`
-                /// Computes the content portion (only) of the intrinsic inline sizes of this flow. This is
-                /// used for calculating shrink-to-fit width. Assumes that intrinsic sizes have already been
-                /// computed for this flow.
+                // Computes the content portion (only) of the intrinsic inline sizes of this flow. This is
+                // used for calculating shrink-to-fit width. Assumes that intrinsic sizes have already been
+                // computed for this flow.
                 let (border_padding, margin) = block.fragment.surrounding_intrinsic_inline_size();
                 IntrinsicISizes {
                     minimum_inline_size: block.base.intrinsic_inline_sizes.minimum_inline_size -
@@ -3825,15 +3813,15 @@ impl ISizeAndMarginsComputer for InlineBlockNonReplaced {
         // shrink to fit algorithm (see CSS 2.1 § 10.3.9)
         let inline_size = match computed_inline_size {
             MaybeAuto::Auto => { // XXX(nyazdani): Inlined `block.get_shrink_to_fit_inline_size(...)`
-                /// Return shrink-to-fit inline-size.
-                ///
-                /// This is where we use the preferred inline-sizes and minimum inline-sizes
-                /// calculated in the bubble-inline-sizes traversal.
+                // Return shrink-to-fit inline-size.
+                //
+                // This is where we use the preferred inline-sizes and minimum inline-sizes
+                // calculated in the bubble-inline-sizes traversal.
 
                 let content_intrinsic_inline_sizes = { // XXX(nyazdani): Inlined `self.content_intrinsic_inline_sizes(...)`
-                    /// Computes the content portion (only) of the intrinsic inline sizes of this flow. This is
-                    /// used for calculating shrink-to-fit width. Assumes that intrinsic sizes have already been
-                    /// computed for this flow.
+                    // Computes the content portion (only) of the intrinsic inline sizes of this flow. This is
+                    // used for calculating shrink-to-fit width. Assumes that intrinsic sizes have already been
+                    // computed for this flow.
                     let (border_padding, margin) = block.fragment.surrounding_intrinsic_inline_size();
                     IntrinsicISizes {
                         minimum_inline_size: block.base.intrinsic_inline_sizes.minimum_inline_size -
@@ -3889,15 +3877,15 @@ impl ISizeAndMarginsComputer for InlineBlockReplaced {
         // shrink to fit algorithm (see CSS 2.1 § 10.3.9)
         let inline_size = match computed_inline_size {
             MaybeAuto::Auto => { // XXX(nyazdani): Inlined `block.get_shrink_to_fit_inline_size(...)`
-                /// Return shrink-to-fit inline-size.
-                ///
-                /// This is where we use the preferred inline-sizes and minimum inline-sizes
-                /// calculated in the bubble-inline-sizes traversal.
+                // Return shrink-to-fit inline-size.
+                //
+                // This is where we use the preferred inline-sizes and minimum inline-sizes
+                // calculated in the bubble-inline-sizes traversal.
 
                 let content_intrinsic_inline_sizes = { // XXX(nyazdani): Inlined `self.content_intrinsic_inline_sizes(...)`
-                    /// Computes the content portion (only) of the intrinsic inline sizes of this flow. This is
-                    /// used for calculating shrink-to-fit width. Assumes that intrinsic sizes have already been
-                    /// computed for this flow.
+                    // Computes the content portion (only) of the intrinsic inline sizes of this flow. This is
+                    // used for calculating shrink-to-fit width. Assumes that intrinsic sizes have already been
+                    // computed for this flow.
                     let (border_padding, margin) = block.fragment.surrounding_intrinsic_inline_size();
                     IntrinsicISizes {
                         minimum_inline_size: block.base.intrinsic_inline_sizes.minimum_inline_size -
