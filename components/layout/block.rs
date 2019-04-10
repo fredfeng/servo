@@ -1507,53 +1507,6 @@ impl BlockFlow {
             DisplayListSection::BlockBackgroundsAndBorders
         }
     }
-
-
-    fn block_content_inline_size(&mut self, layout_context: &LayoutContext) -> Au {
-        let shared_context = layout_context.shared_context();
-
-        self.base.floats = Floats::new(self.base.writing_mode);
-
-        // Our inline-size was set to the inline-size of the containing block by the flow's parent.
-        // Now compute the real value.
-        // Compute inline size based using the `block_container_inline_size` set by the parent flow.
-        // Compute the actual inline size and position for this block.
-        self.compute_used_inline_size(shared_context, self.base.block_container_inline_size);
-        if self.base.flags.is_float() {
-            self.float.as_mut().unwrap().containing_inline_size =
-                self.base.block_container_inline_size
-        }
-
-        // We don't need to guess anything unless this is a block formatting context.
-        // If `max-width` is set, then don't perform this speculation. We guess that the
-        // page set `max-width` in order to avoid hitting floats. The search box on Google
-        // SERPs falls into this category.
-        if
-            self.formatting_context_type() == FormattingContextType::Block
-            && self.fragment.style.max_inline_size() == MaxSize::None
-        {
-            // At this point, we know we can't precisely compute the inline-size of this block now,
-            // because floats might affect it. Speculate that its inline-size is equal to the
-            // inline-size computed above minus the inline-size of the previous left and/or right
-            // floats.
-            self.fragment.border_box.size.inline =
-                self.fragment.border_box.size.inline -
-                speculate_left_inline_space(self.base.speculated_float_placement_in.left, self.fragment.margin.inline_start) -
-                speculate_right_inline_space(self.base.speculated_float_placement_in.right, self.fragment.margin.inline_end)
-        }
-
-        // Move in from the inline-start border edge.
-        let inline_start_content_edge =
-            self.fragment.border_box.start.i + self.fragment.border_padding.inline_start;
-
-        let padding_and_borders = self.fragment.border_padding.inline_start_end();
-
-        // Distance from the inline-end margin edge to the inline-end content edge.
-        let inline_end_content_edge =
-            self.fragment.margin.inline_end + self.fragment.border_padding.inline_end;
-
-        self.fragment.border_box.size.inline - padding_and_borders
-    }
 }
 
 fn speculate_left_inline_space(spec_float_in_left: Au, inline_start: Au) -> Au {
@@ -1562,6 +1515,75 @@ fn speculate_left_inline_space(spec_float_in_left: Au, inline_start: Au) -> Au {
 
 fn speculate_right_inline_space(spec_float_in_right: Au, inline_end: Au) -> Au {
     if inline_end >= Au(0) { max(spec_float_in_right - inline_end, Au(0)) } else { Au(0) }
+}
+
+fn logical_size_from_physical_size(writing_mode: WritingMode, physical_size: Size2D<Au>) -> Option<u> {
+    Some(LogicalSize::from_physical(writing_mode, physical_size).block)
+}
+
+// fn content_inline_size(fragment: &mut Fragment, shared_context: &SharedStyleContext) -> Au {
+//
+//     // Move in from the inline-start border edge.
+//     //let inline_start_content_edge =
+//     //    self.fragment.border_box.start.i + self.fragment.border_padding.inline_start;
+//
+//     //let padding_and_borders = self.fragment.border_padding.inline_start_end();
+//
+//     // Distance from the inline-end margin edge to the inline-end content edge.
+//     //let inline_end_content_edge =
+//     //    self.fragment.margin.inline_end + self.fragment.border_padding.inline_end;
+//
+//     fragment.border_box.size.inline - fragment.border_padding.inline_start_end()
+// }
+
+fn explicit_block_content_size(fragment: &Fragment, parent_container_size: Option<Au>) -> Option<Au> {
+    // Calculate non-auto block size to pass to children.
+    let box_border = match fragment.style().get_position().box_sizing {
+        BoxSizing::BorderBox => fragment.border_padding.block_start_end(),
+        BoxSizing::ContentBox => Au(0),
+    };
+    // https://drafts.csswg.org/css-ui-3/#box-sizing
+    match fragment.style().content_block_size() {
+        Size::Auto => {
+            parent_container_size.and_then(|container_size| {
+                let position = fragment.style().logical_position();
+                let block_start = MaybeAuto::from_style(position.block_start, container_size);
+                let block_end = MaybeAuto::from_style(position.block_end, container_size);
+
+                match (block_start, block_end) {
+                    (MaybeAuto::Specified(block_start), MaybeAuto::Specified(block_end)) => {
+                        let available_block_size =
+                            container_size - fragment.border_padding.block_start_end();
+
+                        // Non-auto margin-block-start and margin-block-end values have already been
+                        // calculated during assign-inline-size.
+                        let margin = fragment.style().logical_margin();
+                        let margin_block_start = match margin.block_start {
+                            LengthPercentageOrAuto::Auto => MaybeAuto::Auto,
+                            _ => MaybeAuto::Specified(fragment.margin.block_start),
+                        };
+                        let margin_block_end = match margin.block_end {
+                            LengthPercentageOrAuto::Auto => MaybeAuto::Auto,
+                            _ => MaybeAuto::Specified(fragment.margin.block_end),
+                        };
+
+                        let margin_block_start = margin_block_start.specified_or_zero();
+                        let margin_block_end = margin_block_end.specified_or_zero();
+                        let sum = block_start + block_end + margin_block_start + margin_block_end;
+                        Some(available_block_size - sum)
+                    },
+                    (_, _) => None,
+                }
+            })
+        },
+        Size::LengthPercentage(ref lp) => lp.maybe_to_used_value(parent_container_size),
+    }.map(|x| {
+        if x < box_border {
+            Au(0)
+        } else {
+            x - box_border
+        }
+    })
 }
 
 impl Flow for BlockFlow {
@@ -1737,106 +1759,53 @@ impl Flow for BlockFlow {
         // If `max-width` is set, then don't perform this speculation. We guess that the
         // page set `max-width` in order to avoid hitting floats. The search box on Google
         // SERPs falls into this category.
-        if
-            self.formatting_context_type() == FormattingContextType::Block
-            && self.fragment.style.max_inline_size() == MaxSize::None
-        {
-            // At this point, we know we can't precisely compute the inline-size of this block now,
-            // because floats might affect it. Speculate that its inline-size is equal to the
-            // inline-size computed above minus the inline-size of the previous left and/or right
-            // floats.
-            self.fragment.border_box.size.inline =
-                self.fragment.border_box.size.inline -
-                speculate_left_inline_space(self.base.speculated_float_placement_in.left, self.fragment.margin.inline_start) -
-                speculate_right_inline_space(self.base.speculated_float_placement_in.right, self.fragment.margin.inline_end)
-        }
+        // if
+        //     self.formatting_context_type() == FormattingContextType::Block
+        //     && self.fragment.style.max_inline_size() == MaxSize::None
+        // {
+        // At this point, we know we can't precisely compute the inline-size of this block now,
+        // because floats might affect it. Speculate that its inline-size is equal to the
+        // inline-size computed above minus the inline-size of the previous left and/or right
+        // floats.
+        self.fragment.border_box.size.inline =
+            self.fragment.border_box.size.inline -
+            speculate_left_inline_space(self.base.speculated_float_placement_in.left, self.fragment.margin.inline_start) -
+            speculate_right_inline_space(self.base.speculated_float_placement_in.right, self.fragment.margin.inline_end);
+        // }
 
-        // Move in from the inline-start border edge.
-        let inline_start_content_edge =
-            self.fragment.border_box.start.i + self.fragment.border_padding.inline_start;
-
-        let padding_and_borders = self.fragment.border_padding.inline_start_end();
-
-        // Distance from the inline-end margin edge to the inline-end content edge.
-        let inline_end_content_edge =
-            self.fragment.margin.inline_end + self.fragment.border_padding.inline_end;
-
-        let content_inline_size = self.block_content_inline_size(layout_context);
-
-        // Assigns the computed inline-start content edge and inline-size to all the children of this
-        // block flow.
-
-        let opaque_self = OpaqueFlow::from_flow(self);
-
-        // Calculate non-auto block size to pass to children.
-        let box_border = match self.fragment.style().get_position().box_sizing {
-            BoxSizing::BorderBox => self.fragment.border_padding.block_start_end(),
-            BoxSizing::ContentBox => Au(0),
-        };
-        let parent_container_size = self.explicit_block_containing_size(shared_context);
-        // https://drafts.csswg.org/css-ui-3/#box-sizing
-        let mut explicit_content_size = match self.fragment.style().content_block_size() {
-            Size::Auto => {
-                parent_container_size.and_then(|container_size| {
-                    let position = self.fragment.style().logical_position();
-                    let block_start = MaybeAuto::from_style(position.block_start, container_size);
-                    let block_end = MaybeAuto::from_style(position.block_end, container_size);
-
-                    match (block_start, block_end) {
-                        (MaybeAuto::Specified(block_start), MaybeAuto::Specified(block_end)) => {
-                            let available_block_size =
-                                container_size - self.fragment.border_padding.block_start_end();
-
-                            // Non-auto margin-block-start and margin-block-end values have already been
-                            // calculated during assign-inline-size.
-                            let margin = self.fragment.style().logical_margin();
-                            let margin_block_start = match margin.block_start {
-                                LengthPercentageOrAuto::Auto => MaybeAuto::Auto,
-                                _ => MaybeAuto::Specified(self.fragment.margin.block_start),
-                            };
-                            let margin_block_end = match margin.block_end {
-                                LengthPercentageOrAuto::Auto => MaybeAuto::Auto,
-                                _ => MaybeAuto::Specified(self.fragment.margin.block_end),
-                            };
-
-                            let margin_block_start = margin_block_start.specified_or_zero();
-                            let margin_block_end = margin_block_end.specified_or_zero();
-                            let sum = block_start + block_end + margin_block_start + margin_block_end;
-                            Some(available_block_size - sum)
-                        },
-                        (_, _) => None,
-                    }
-                })
-            },
-            Size::LengthPercentage(ref lp) => lp.maybe_to_used_value(parent_container_size),
-        }.map(|x| {
-            if x < box_border {
-                Au(0)
-            } else {
-                x - box_border
-            }
-        });
-        if self.is_root() {
-            explicit_content_size = max(parent_container_size, explicit_content_size);
-        }
-        // Calculate containing block inline size.
-        let containing_block_size = if self.base.flags.contains(FlowFlags::IS_ABSOLUTELY_POSITIONED) {
-            // Right now, this only gets the containing block size for absolutely positioned elements.
-            // Note: We assume this is in a top-down traversal, so it is ok to reference the CB.
-            //debug_assert!(self.base.flags.contains(FlowFlags::IS_ABSOLUTELY_POSITIONED));
-            if self.is_fixed() || self.is_root() {
-                // Initial containing block is the CB for the root
-                LogicalSize::from_physical(self.base.writing_mode, shared_context.viewport_size()).inline
-            } else {
-                self.base.absolute_cb.generated_containing_block_size(opaque_self).inline
-            }
+        //let parent_container_size = self.explicit_block_containing_size(shared_context);
+        let parent_container_size = if self.is_root() || self.is_fixed() {
+            let viewport_size = LogicalSize::from_physical(
+                self.fragment.style.writing_mode,
+                shared_context.viewport_size(),
+            );
+            Some(viewport_size.block)
         } else {
-            content_inline_size
+            self.base.block_container_explicit_block_size
         };
-        // FIXME (mbrubeck): Get correct mode for absolute containing block
-        let containing_block_mode = self.base.writing_mode;
+        let content_inline_size = self.fragment.border_box.size.inline - self.fragment.border_padding.inline_start_end();
+        let content_block_size = explicit_block_content_size(&self.fragment, parent_container_size);
+        let explicit_content_size = if self.is_root() {
+            max(parent_container_size, content_block_size)
+        } else {
+            content_block_size
+        };
+        // Calculate containing block inline size.
+        // let containing_block_size = if self.base.flags.contains(FlowFlags::IS_ABSOLUTELY_POSITIONED) {
+        //     // Right now, this only gets the containing block size for absolutely positioned elements.
+        //     // Note: We assume this is in a top-down traversal, so it is ok to reference the CB.
+        //     //debug_assert!(self.base.flags.contains(FlowFlags::IS_ABSOLUTELY_POSITIONED));
+        //     if self.is_fixed() || self.is_root() {
+        //         // Initial containing block is the CB for the root
+        //         LogicalSize::from_physical(self.base.writing_mode, shared_context.viewport_size()).inline
+        //     } else {
+        //         self.base.absolute_cb.generated_containing_block_size(OpaqueFlow::from_flow(self)).inline
+        //     }
+        // } else {
+        //     content_inline_size
+        // };
 
-        for kid in self.base.child_iter_mut() {
+        for kid in self.base.children.iter_mut() {
             kid.mut_base().block_container_explicit_block_size = explicit_content_size;
 
             // The inline-start margin edge of the child flow is at our inline-start content edge,
@@ -1851,48 +1820,48 @@ impl Flow for BlockFlow {
             // float child does not have `REFLOW` set, we must be careful to avoid touching its
             // inline position, as no logic will run afterward to set its true value.
             //let kid_base = kid.mut_base();
-            let reflow_damage = if kid.base().flags.contains(FlowFlags::IS_ABSOLUTELY_POSITIONED)
-            {
-                ServoRestyleDamage::REFLOW_OUT_OF_FLOW
-            } else {
-                ServoRestyleDamage::REFLOW
-            };
-            if kid.base()
-                .flags
-                .contains(FlowFlags::INLINE_POSITION_IS_STATIC) &&
-                kid.base().restyle_damage.contains(reflow_damage)
-            {
-                let kid_mode = kid.base().writing_mode;
-                kid.mut_base().position.start.i =
-                    if kid_mode.is_bidi_ltr() == containing_block_mode.is_bidi_ltr() {
-                        inline_start_content_edge
-                    } else {
-                        // The kid's inline 'start' is at the parent's 'end'
-                        inline_end_content_edge
-                    };
-            }
+            // let reflow_damage = if kid.base().flags.contains(FlowFlags::IS_ABSOLUTELY_POSITIONED)
+            // {
+            //     ServoRestyleDamage::REFLOW_OUT_OF_FLOW
+            // } else {
+            //     ServoRestyleDamage::REFLOW
+            // };
+            // FIXME (mbrubeck): Get correct mode for absolute containing block
+            //let containing_block_mode = self.base.writing_mode;
+            // if kid.base()
+            //     .flags
+            //     .contains(FlowFlags::INLINE_POSITION_IS_STATIC) &&
+            //     kid.base().restyle_damage.contains(reflow_damage)
+            // {
+            kid.mut_base().position.start.i =
+                if kid.base().writing_mode.is_bidi_ltr() == self.base.writing_mode.is_bidi_ltr() {
+                    self.fragment.border_box.start.i + self.fragment.border_padding.inline_start
+                } else {
+                    // The kid's inline 'start' is at the parent's 'end'
+                    self.fragment.margin.inline_end + self.fragment.border_padding.inline_end
+                };
+            // }
             kid.mut_base().block_container_inline_size = content_inline_size;
-            kid.mut_base().block_container_writing_mode = containing_block_mode;
+            kid.mut_base().block_container_writing_mode = self.base.writing_mode;
 
             // Per CSS 2.1 § 16.3.1, text alignment propagates to all children in flow.
             //
             // TODO(#2265, pcwalton): Do this in the cascade instead.
-            let containing_block_text_align = self.fragment.style().get_inherited_text().text_align;
             kid.mut_base()
                 .flags
-                .set_text_align(containing_block_text_align);
+                .set_text_align(self.fragment.style().get_inherited_text().text_align);
 
             // Handle `text-indent` on behalf of any inline children that we have. This is
             // necessary because any percentages are relative to the containing block, which only
             // we know.
-            if kid.is_inline_flow() {
-                kid.as_mut_inline().first_line_indentation = self
-                    .fragment
-                    .style()
-                    .get_inherited_text()
-                    .text_indent
-                    .to_used_value(containing_block_size);
-            }
+            // if kid.is_inline_flow() {
+            //     kid.as_mut_inline().first_line_indentation = self
+            //         .fragment
+            //         .style()
+            //         .get_inherited_text()
+            //         .text_indent
+            //         .to_used_value(containing_block_size);
+            // }
         }
     }
 
@@ -2203,7 +2172,7 @@ impl Flow for BlockFlow {
         }
     }
 
-    fn compute_stacking_relative_position(&mut self, _layout_context: &LayoutContext) { // XXX(nyazdani): Visitor
+    fn compute_stacking_relative_position(&mut self, _layout_context: &LayoutContext) {
         // FIXME (mbrubeck): Get the real container size, taking the container writing mode into
         // account.  Must handle vertical writing modes.
         let container_size = Size2D::new(self.base.block_container_inline_size, Au(0));
@@ -2212,63 +2181,47 @@ impl Flow for BlockFlow {
             self.base.clip = Rect::max_rect();
         }
 
-        if self
-            .base
-            .flags
-            .contains(FlowFlags::IS_ABSOLUTELY_POSITIONED)
-        {
-            let position_start = self
-                .base
-                .position
-                .start
-                .to_physical(self.base.writing_mode, container_size);
-
-            // Compute our position relative to the nearest ancestor stacking context. This will be
-            // passed down later as part of containing block details for absolute descendants.
-            let absolute_stacking_relative_position = if self.is_fixed() {
-                // The viewport is initially at (0, 0).
-                position_start
-            } else {
-                // Absolute position of the containing block + position of absolute
-                // flow w.r.t. the containing block.
-                self.base
-                    .late_absolute_position_info
-                    .stacking_relative_position_of_absolute_containing_block +
-                    position_start.to_vector()
-            };
-
-            if !self.base.writing_mode.is_vertical() {
-                if !self
-                    .base
-                    .flags
-                    .contains(FlowFlags::INLINE_POSITION_IS_STATIC)
-                {
-                    self.base.stacking_relative_position.x = absolute_stacking_relative_position.x
-                }
-                if !self
-                    .base
-                    .flags
-                    .contains(FlowFlags::BLOCK_POSITION_IS_STATIC)
-                {
-                    self.base.stacking_relative_position.y = absolute_stacking_relative_position.y
-                }
-            } else {
-                if !self
-                    .base
-                    .flags
-                    .contains(FlowFlags::INLINE_POSITION_IS_STATIC)
-                {
-                    self.base.stacking_relative_position.y = absolute_stacking_relative_position.y
-                }
-                if !self
-                    .base
-                    .flags
-                    .contains(FlowFlags::BLOCK_POSITION_IS_STATIC)
-                {
-                    self.base.stacking_relative_position.x = absolute_stacking_relative_position.x
-                }
-            }
-        }
+        // if self
+        //     .base
+        //     .flags
+        //     .contains(FlowFlags::IS_ABSOLUTELY_POSITIONED)
+        // {
+        //     let position_start = self
+        //         .base
+        //         .position
+        //         .start
+        //         .to_physical(self.base.writing_mode, container_size);
+        //
+        //     // Compute our position relative to the nearest ancestor stacking context. This will be
+        //     // passed down later as part of containing block details for absolute descendants.
+        //     let absolute_stacking_relative_position = if self.is_fixed() {
+        //         // The viewport is initially at (0, 0).
+        //         position_start
+        //     } else {
+        //         // Absolute position of the containing block + position of absolute
+        //         // flow w.r.t. the containing block.
+        //         self.base
+        //             .late_absolute_position_info
+        //             .stacking_relative_position_of_absolute_containing_block +
+        //             position_start.to_vector()
+        //     };
+        //
+        //     if !self
+        //         .base
+        //         .flags
+        //         .contains(FlowFlags::INLINE_POSITION_IS_STATIC)
+        //     {
+        //         self.base.stacking_relative_position.x = absolute_stacking_relative_position.x
+        //     }
+        //     if !self
+        //         .base
+        //         .flags
+        //         .contains(FlowFlags::BLOCK_POSITION_IS_STATIC)
+        //     {
+        //         self.base.stacking_relative_position.y = absolute_stacking_relative_position.y
+        //     }
+        //
+        // }
 
         // For relatively-positioned descendants, the containing block formed by a block is just
         // the content box. The containing block for absolutely-positioned descendants, on the
@@ -2299,8 +2252,7 @@ impl Flow for BlockFlow {
                     self.base.writing_mode,
                     logical_border_width.inline_start,
                     logical_border_width.block_start,
-                );
-                let position = position.to_physical(self.base.writing_mode, container_size);
+                ).to_physical(self.base.writing_mode, container_size);
 
                 // Some blocks establish a stacking context, but not a containing block for
                 // absolutely positioned elements. An example of this might be a block that has
@@ -2317,10 +2269,10 @@ impl Flow for BlockFlow {
                     .late_absolute_position_info
                     .stacking_relative_position_of_absolute_containing_block
             };
-        let late_absolute_position_info_for_children = LateAbsolutePositionInfo {
-            stacking_relative_position_of_absolute_containing_block:
-                stacking_relative_position_of_absolute_containing_block_for_children,
-        };
+        // let late_absolute_position_info_for_children = LateAbsolutePositionInfo {
+        //     stacking_relative_position_of_absolute_containing_block:
+        //         stacking_relative_position_of_absolute_containing_block_for_children,
+        // };
         let container_size_for_children =
             self.base.position.size.to_physical(self.base.writing_mode);
 
@@ -2344,48 +2296,49 @@ impl Flow for BlockFlow {
 
         // Process children.
         for kid in self.base.child_iter_mut() {
-            if kid
-                .base()
-                .flags
-                .contains(FlowFlags::INLINE_POSITION_IS_STATIC) ||
-                kid.base()
-                    .flags
-                    .contains(FlowFlags::BLOCK_POSITION_IS_STATIC)
-            {
-                let kid_base = kid.mut_base();
-                let physical_position = kid_base
-                    .position
-                    .to_physical(kid_base.writing_mode, container_size_for_children);
+            // if kid
+            //     .base()
+            //     .flags
+            //     .contains(FlowFlags::INLINE_POSITION_IS_STATIC) ||
+            //     kid.base()
+            //         .flags
+            //         .contains(FlowFlags::BLOCK_POSITION_IS_STATIC)
+            // {
+            let physical_position = kid.base()
+                .position
+                .to_physical(kid.base().writing_mode, container_size_for_children);
 
-                // Set the inline and block positions as necessary.
-                if !kid_base.writing_mode.is_vertical() {
-                    if kid_base
-                        .flags
-                        .contains(FlowFlags::INLINE_POSITION_IS_STATIC)
-                    {
-                        kid_base.stacking_relative_position.x =
-                            origin_for_children.x + physical_position.origin.x
-                    }
-                    if kid_base.flags.contains(FlowFlags::BLOCK_POSITION_IS_STATIC) {
-                        kid_base.stacking_relative_position.y =
-                            origin_for_children.y + physical_position.origin.y
-                    }
+            // Set the inline and block positions as necessary.
+            kid.mut_base().stacking_relative_position.x =
+                if kid.base().flags.contains(FlowFlags::INLINE_POSITION_IS_STATIC) {
+                    origin_for_children.x + physical_position.origin.x
                 } else {
-                    if kid_base
-                        .flags
-                        .contains(FlowFlags::INLINE_POSITION_IS_STATIC)
-                    {
-                        kid_base.stacking_relative_position.y =
-                            origin_for_children.y + physical_position.origin.y
-                    }
-                    if kid_base.flags.contains(FlowFlags::BLOCK_POSITION_IS_STATIC) {
-                        kid_base.stacking_relative_position.x =
-                            origin_for_children.x + physical_position.origin.x
-                    }
-                }
-            }
+                    Au(0)
+                };
+            kid.mut_base().stacking_relative_position.y =
+                if kid.base().flags.contains(FlowFlags::BLOCK_POSITION_IS_STATIC) {
+                    origin_for_children.y + physical_position.origin.y
+                } else {
+                    Au(0)
+                };
+            // }
 
-            kid.mut_base().late_absolute_position_info = late_absolute_position_info_for_children;
+            kid.mut_base()
+                .late_absolute_position_info
+                .stacking_relative_position_of_absolute_containing_block
+                .x =
+                    stacking_relative_position_of_absolute_containing_block_for_children.x;
+
+            kid.mut_base()
+                .late_absolute_position_info
+                .stacking_relative_position_of_absolute_containing_block
+                .y =
+                    stacking_relative_position_of_absolute_containing_block_for_children.y;
+
+            // kid.mut_base().late_absolute_position_info = LateAbsolutePositionInfo {
+            //     stacking_relative_position_of_absolute_containing_block:
+            //         stacking_relative_position_of_absolute_containing_block_for_children,
+            // };
         }
     }
 
