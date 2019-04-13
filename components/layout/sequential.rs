@@ -25,51 +25,53 @@ pub fn resolve_generated_content(root: &mut dyn Flow, layout_context: &LayoutCon
 
 /// Run the main layout passes sequentially.
 pub fn reflow(root: &mut dyn Flow, layout_context: &LayoutContext, relayout_mode: RelayoutMode) {
-    fn doit(
-        flow: &mut dyn Flow,
-        assign_inline_sizes: AssignISizes,
-        assign_block_sizes: AssignBSizes,
-        relayout_mode: RelayoutMode,
-    ) {
-        // Force reflow children during this traversal. This is needed when we failed
-        // the float speculation of a block formatting context and need to fix it.
-        if relayout_mode == RelayoutMode::Force {
-            flow.mut_base()
-                .restyle_damage
-                .insert(ServoRestyleDamage::REFLOW_OUT_OF_FLOW | ServoRestyleDamage::REFLOW);
-        }
+    // fn doit(
+    //     flow: &mut dyn Flow,
+    //     assign_inline_sizes: AssignISizes,
+    //     assign_block_sizes: AssignBSizes,
+    //     relayout_mode: RelayoutMode,
+    // ) {
+    //     // Force reflow children during this traversal. This is needed when we failed
+    //     // the float speculation of a block formatting context and need to fix it.
+    //     if relayout_mode == RelayoutMode::Force {
+    //         flow.mut_base()
+    //             .restyle_damage
+    //             .insert(ServoRestyleDamage::REFLOW_OUT_OF_FLOW | ServoRestyleDamage::REFLOW);
+    //     }
+    //
+    //     if assign_inline_sizes.should_process(flow) {
+    //         assign_inline_sizes.process(flow);
+    //     }
+    //
+    //     for kid in flow.mut_base().child_iter_mut() {
+    //         doit(kid, assign_inline_sizes, assign_block_sizes, relayout_mode);
+    //     }
+    //
+    //     if assign_block_sizes.should_process(flow) {
+    //         assign_block_sizes.process(flow);
+    //     }
+    // }
 
-        if assign_inline_sizes.should_process(flow) {
-            assign_inline_sizes.process(flow);
-        }
-
-        for kid in flow.mut_base().child_iter_mut() {
-            doit(kid, assign_inline_sizes, assign_block_sizes, relayout_mode);
-        }
-
-        if assign_block_sizes.should_process(flow) {
-            assign_block_sizes.process(flow);
-        }
-    }
-
-    if opts::get().bubble_inline_sizes_separately {
+    // if opts::get().bubble_inline_sizes_separately {
         let bubble_inline_sizes = BubbleISizes {
             layout_context: &layout_context,
         };
         bubble_inline_sizes.traverse(root);
-    }
+    // }
 
     let assign_inline_sizes = AssignISizes {
         layout_context: &layout_context,
     };
+    assign_inline_sizes.traverse(root);
     let assign_block_sizes = AssignBSizes {
         layout_context: &layout_context,
     };
-    if relayout_mode == RelayoutMode::Incremental {
-        println!("relayout_mode: {:?}", "incremental");
-    }
-
-    doit(root, assign_inline_sizes, assign_block_sizes, relayout_mode);
+    assign_block_sizes.traverse(root);
+    // if relayout_mode == RelayoutMode::Incremental {
+    //     println!("relayout_mode: {:?}", "incremental");
+    // }
+    //
+    // doit(root, assign_inline_sizes, assign_block_sizes, relayout_mode);
 }
 
 pub fn build_display_list_for_subtree<'a>(

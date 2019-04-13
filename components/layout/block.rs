@@ -1850,6 +1850,9 @@ impl BlockFlow {
 
     /// Computes intrinsic inline sizes for a block.
     pub fn bubble_inline_sizes_for_block(&mut self, consult_children: bool) {
+        // READ: children.intrinsic_inline_sizes.minimum_inline_size
+        // READ: children.intrinsic_inline_sizes.preferred_inline_size
+        // WRITE: self.base.intrinsic_inline_sizes
         let _scope = layout_debug_scope!("block::bubble_inline_sizes {:x}", self.base.debug_id());
 
         let mut flags = self.base.flags;
@@ -2250,8 +2253,15 @@ impl Flow for BlockFlow {
     }
 
     fn assign_block_size(&mut self, ctx: &LayoutContext) {
-        let remaining = Flow::fragment(self, ctx, None);
-        debug_assert!(remaining.is_none());
+        // Can't do anything with anything that floats might flow through until we reach their
+        // inorder parent.
+        //
+        // NB: We must return without resetting the restyle bits for these, as we haven't actually
+        // reflowed anything!
+        if !(self as &dyn Flow).floats_might_flow_through() {
+            let remaining = Flow::fragment(self, ctx, None);
+            debug_assert!(remaining.is_none());
+        }
     }
 
     fn fragment(
@@ -2319,13 +2329,17 @@ impl Flow for BlockFlow {
         }
     }
 
-    fn compute_stacking_relative_position(&mut self, _layout_context: &LayoutContext) {
+    fn compute_stacking_relative_position(&mut self, layout_context: &LayoutContext) {
         // FIXME (mbrubeck): Get the real container size, taking the container writing mode into
         // account.  Must handle vertical writing modes.
         let container_size = Size2D::new(self.base.block_container_inline_size, Au(0));
 
         if self.is_root() {
             self.base.clip = Rect::max_rect();
+            self.base.stacking_relative_position =
+                LogicalPoint::zero(self.base.writing_mode)
+                    .to_physical(self.base.writing_mode, layout_context.shared_context().viewport_size())
+                    .to_vector();
         }
 
         if self

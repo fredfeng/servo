@@ -126,6 +126,8 @@ use style_traits::CSSPixel;
 use style_traits::DevicePixel;
 use style_traits::SpeculativePainter;
 
+use layout::synthesized;
+
 /// Information needed by the layout thread.
 pub struct LayoutThread {
     /// The ID of the pipeline that we belong to.
@@ -966,7 +968,7 @@ impl LayoutThread {
     #[inline(never)]
     fn solve_constraints(layout_root: &mut dyn Flow, layout_context: &LayoutContext) {
         let _scope = layout_debug_scope!("solve_constraints");
-        sequential::reflow(layout_root, layout_context, RelayoutMode::Incremental);
+        synthesized::reflow(layout_root, layout_context, RelayoutMode::Incremental);
     }
 
     /// Performs layout constraint solving in parallel.
@@ -1005,24 +1007,24 @@ impl LayoutThread {
         layout_context: &mut LayoutContext,
         rw_data: &mut LayoutThreadData,
     ) {
-        let writing_mode = layout_root.base().writing_mode;
+        // let writing_mode = layout_root.base().writing_mode;
         let (metadata, sender) = (self.profiler_metadata(), self.time_profiler_chan.clone());
         profile(
             profile_time::ProfilerCategory::LayoutDispListBuild,
             metadata.clone(),
             sender.clone(),
             || {
-                layout_root.mut_base().stacking_relative_position =
-                    LogicalPoint::zero(writing_mode)
-                        .to_physical(writing_mode, self.viewport_size)
-                        .to_vector();
-
-                layout_root.mut_base().clip = data.page_clip_rect;
-
-                let traversal = ComputeStackingRelativePositions {
-                    layout_context: layout_context,
-                };
-                traversal.traverse(layout_root);
+                // layout_root.mut_base().stacking_relative_position =
+                //     LogicalPoint::zero(writing_mode)
+                //         .to_physical(writing_mode, self.viewport_size)
+                //         .to_vector();
+                //
+                // layout_root.mut_base().clip = data.page_clip_rect;
+                //
+                // let traversal = ComputeStackingRelativePositions {
+                //     layout_context: layout_context,
+                // };
+                // traversal.traverse(layout_root);
 
                 if layout_root
                     .base()
@@ -1743,27 +1745,35 @@ impl LayoutThread {
                 || {
                     let profiler_metadata = self.profiler_metadata();
 
-                    let thread_pool = if self.parallel_flag {
-                        STYLE_THREAD_POOL.style_thread_pool.as_ref()
-                    } else {
-                        None
-                    };
-
-                    if let Some(pool) = thread_pool {
-                        // Parallel mode.
-                        println!("parallel");
-                        LayoutThread::solve_constraints_parallel(
-                            pool,
-                            FlowRef::deref_mut(root_flow),
-                            profiler_metadata,
-                            self.time_profiler_chan.clone(),
-                            &*context,
-                        );
-                    } else {
-                        println!("sequential.");
-                        //Sequential mode
-                        LayoutThread::solve_constraints(FlowRef::deref_mut(root_flow), &context)
-                    }
+                    // let thread_pool = if self.parallel_flag {
+                    //     STYLE_THREAD_POOL.style_thread_pool.as_ref()
+                    // } else {
+                    //     None
+                    // };
+                    //
+                    // if let Some(pool) = thread_pool {
+                    //     // Parallel mode.
+                    //     println!("parallel");
+                    //     LayoutThread::solve_constraints_parallel(
+                    //         pool,
+                    //         FlowRef::deref_mut(root_flow),
+                    //         profiler_metadata,
+                    //         self.time_profiler_chan.clone(),
+                    //         &*context,
+                    //     );
+                    // } else {
+                    //     println!("sequential.");
+                    //     //Sequential mode
+                    //     LayoutThread::solve_constraints(FlowRef::deref_mut(root_flow), &context)
+                    // }
+                    let root = FlowRef::deref_mut(root_flow);
+                    // let writing_mode = root.base().writing_mode;
+                    // root.mut_base().stacking_relative_position =
+                    //     LogicalPoint::zero(writing_mode)
+                    //         .to_physical(writing_mode, self.viewport_size)
+                    //         .to_vector();
+                    root.mut_base().clip = data.page_clip_rect;
+                    LayoutThread::solve_constraints(root, &context);
                 },
             );
         }
