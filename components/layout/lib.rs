@@ -54,6 +54,8 @@ mod text;
 pub mod traversal;
 pub mod wrapper;
 
+pub mod synthesized;
+
 // For unit tests:
 pub use self::data::LayoutData;
 pub use crate::fragment::Fragment;

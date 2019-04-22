@@ -125,6 +125,7 @@ use style::traversal_flags::TraversalFlags;
 use style_traits::CSSPixel;
 use style_traits::DevicePixel;
 use style_traits::SpeculativePainter;
+use layout::synthesized;
 
 /// Information needed by the layout thread.
 pub struct LayoutThread {
@@ -966,7 +967,8 @@ impl LayoutThread {
     #[inline(never)]
     fn solve_constraints(layout_root: &mut dyn Flow, layout_context: &LayoutContext) {
         let _scope = layout_debug_scope!("solve_constraints");
-        sequential::reflow(layout_root, layout_context, RelayoutMode::Incremental);
+        // sequential::reflow(layout_root, layout_context, RelayoutMode::Incremental);
+        synthesized::reflow(layout_root, layout_context, RelayoutMode::Incremental);
     }
 
     /// Performs layout constraint solving in parallel.

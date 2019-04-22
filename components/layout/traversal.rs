@@ -328,6 +328,26 @@ impl<'a> PreorderFlowTraversal for ComputeStackingRelativePositions<'a> {
     }
 }
 
+#[inline]
+pub fn preorder<F>(flow: &mut dyn Flow, process: &F)
+    where F: Fn(&mut dyn Flow) -> ()
+{
+    process(flow);
+    for kid in flow.mut_base().child_iter_mut() {
+        preorder(kid, process);
+    }
+}
+
+#[inline]
+pub fn postorder<F>(flow: &mut dyn Flow, process: &F)
+    where F: Fn(&mut dyn Flow) -> ()
+{
+    for kid in flow.mut_base().child_iter_mut() {
+        postorder(kid, process);
+    }
+    process(flow);
+}
+
 pub struct BuildDisplayList<'a> {
     pub state: DisplayListBuildState<'a>,
 }
